@@ -11,6 +11,7 @@ llvm_map_components_to_libnames(llvm_libs analysis executionengine support core 
 find_package(JNI 11 REQUIRED)
 
 add_library(profjit SHARED library.cpp)
+target_compile_options(profjit PUBLIC -fno-omit-frame-pointer)
 target_link_libraries(profjit ${JAVA_JVM_LIBRARY} fmt)
 target_include_directories(profjit PUBLIC ${JAVA_INCLUDE_PATH})
 target_include_directories(profjit PUBLIC ${JAVA_INCLUDE_PATH2})
