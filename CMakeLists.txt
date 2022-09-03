@@ -1,12 +1,12 @@
 cmake_minimum_required(VERSION 3.23)
 project(Kaleidoscope)
 
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 17)
 
 find_package(LLVM 14.0.6 REQUIRED CONFIG)
 include_directories(${LLVM_INCLUDE_DIRS})
 add_definitions(${LLVM_DEFINITIONS})
-llvm_map_components_to_libnames(llvm_libs analysis executionengine target X86 support core instcombine object irreader passes mcjit runtimedyld native)
+llvm_map_components_to_libnames(llvm_libs analysis executionengine PerfJITEvents target X86 support core instcombine object irreader passes mcjit runtimedyld native)
 
 find_package(JNI 11 REQUIRED)
 
@@ -17,7 +17,12 @@ target_include_directories(profjit PUBLIC ${JAVA_INCLUDE_PATH})
 target_include_directories(profjit PUBLIC ${JAVA_INCLUDE_PATH2})
 
 add_library(fib OBJECT fib.c)
-target_compile_options(fib PUBLIC -emit-llvm -S -fno-omit-frame-pointer)
-set_target_properties(fib PROPERTIES SUFFIX ".ll")
+target_compile_options(fib PUBLIC -O3 -g -emit-llvm -S -fno-omit-frame-pointer)
+target_compile_definitions(profjit PUBLIC FIB_LL_PATH="$<TARGET_OBJECTS:fib>")
+#
+#
 
+#add_custom_command(COMMAND ${CMAKE_C_COMPILER} -O3 -g -emit-llvm -S -fno-omit-frame-pointer ${CMAKE_SOURCE_DIR}/fib.c BYPRODUCTS fib.ll TARGET profjit)
+#
+#target_compile_definitions(profjit PUBLIC FIB_LL_PATH="${CMAKE_BINARY_DIR}/fib.ll")
 add_dependencies(profjit fib)
