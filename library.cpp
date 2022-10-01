@@ -14,7 +14,11 @@
 #include <llvm/Passes/PassBuilder.h>
 #include <llvm/Target/TargetOptions.h>
 #include <llvm/Support/TargetSelect.h>
+#include <llvm/Support/FileSystem.h>
 #include <llvm/IR/Verifier.h>
+#include <unistd.h>
+#include <filesystem>
+#include <atomic>
 
 extern "C" int fib(int n) {
     if (n < 2) return n;
@@ -60,6 +64,9 @@ public:
     };
 };
 
+
+auto _uniq = std::atomic_int{0};
+
 class MyJitListener : public JITEventListener {
     void notifyObjectLoaded(ObjectKey K, const object::ObjectFile &Obj,
                             const RuntimeDyld::LoadedObjectInfo &L) override {
@@ -74,12 +81,24 @@ class MyJitListener : public JITEventListener {
         OwningBinary<ObjectFile> DebugObjOwner = L.getObjectForDebug(Obj);
         const ObjectFile &DebugObj = *DebugObjOwner.getBinary();
 
-        auto dctx = DWARFContext::create(DebugObj);
-        dctx->getLineTableForUnit(dctx->getUnitAtIndex(0));
+        // auto dctx = DWARFContext::create(DebugObj);
+        // dctx->getLineTableForUnit(dctx->getUnitAtIndex(0));
+        // dctx->getDIEForOffset(1).getCallerFrame()
         // Get the address of the object image for use as a unique identifier
         std::unique_ptr<DIContext> Context = DWARFContext::create(DebugObj);
         // Context->getLineInfoForAddress()
+        // std::fopen(fmt::format("/tmp/{}.lldump", getpid()), );
         // Use symbol info to iterate over functions in the object.
+
+        auto dir = std::filesystem::path(fmt::format("/tmp/.lldump/"));
+        std::filesystem::create_directories(dir);
+        auto filename = fmt::format("{}.{}.lldump", getpid(), _uniq.fetch_add(1));
+        auto file = dir / filename;
+        auto ec = std::error_code();
+
+        auto outf = std::fopen(file.c_str(), "w");
+        // dump{file, ec, sys::fs::OpenFlags::OF_Text};
+
         for (const std::pair<SymbolRef, uint64_t> &P: computeSymbolSizes(DebugObj)) {
             SymbolRef Sym = P.first;
             std::string SourceFileName;
@@ -114,6 +133,7 @@ class MyJitListener : public JITEventListener {
                 if (*SectOrErr != Obj.section_end())
                     SectionIndex = SectOrErr.get()->getIndex();
             fmt::print("sym {} size {} addr {:x} section {}\n", *Name, Size, Address.Address, SectionIndex);
+            fmt::print(outf, "{} {} {}\n", *Name, Size, Address.Address);
             Address.SectionIndex = SectionIndex;
 
             auto spec = DILineInfoSpecifier{DILineInfoSpecifier::FileLineInfoKind::BaseNameOnly,
@@ -134,8 +154,13 @@ class MyJitListener : public JITEventListener {
                 }
             }
         }
+        fmt::print("Dumped to {}\n", file.string());
         std::fflush(stdout);
-
+        if(fclose(outf)) {
+            fmt::print(stderr, "Error in close\n");
+        };
+        fmt::print("Closed\n");
+        std::fflush(stdout);
     }
 };
 
@@ -162,6 +187,7 @@ class MyJitListener : public JITEventListener {
         return 2;
     }
 
+    fmt::print("{}\n", input_path);
     fmt::print("{}\n", mod->getSourceFileName());
     std::fflush(stdout);
     EngineBuilder builder{std::move(mod)};
