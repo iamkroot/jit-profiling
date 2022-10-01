@@ -26,3 +26,7 @@ target_compile_definitions(profjit PUBLIC FIB_LL_PATH="$<TARGET_OBJECTS:fib>")
 #
 #target_compile_definitions(profjit PUBLIC FIB_LL_PATH="${CMAKE_BINARY_DIR}/fib.ll")
 add_dependencies(profjit fib)
+
+add_executable(inotify_test inotify_test.cpp)
+target_link_libraries(inotify_test inotify-cpp fmt)
+
