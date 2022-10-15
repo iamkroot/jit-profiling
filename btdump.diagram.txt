@@ -1,0 +1,38 @@
+                                             +--------------------------------------------+
+                                             |               backtrace pool               |
+                                             |                                            |
+                                             |                                            |
+      .lldump.bt file                        | const char* names[]                        |-__     +------------------+
+     +---------------------------+           |        bt1+---------+---------+            |   "__  |   string pool    |
+     |pc1 | btAddr1 | numFrames=2|-----------|-----------|funcname1|funcname2|            |      "-|                  |
+     +---------------------------+           |           +---------+---------+            |        |                  |
+     |pc2 | btAddr2 | numFrames=3|--_____    |                                            |       -|                  |
+     +---------------------------+       """-|-_____  bt2+---------+---------+---------+  |     /" | hello\0main\0... |
+     |pc3 | btAddr2 | numFrames=3|-----------|-----------|funcnamex|funcname0|funcname2|  |---//---| hashi64\0        |
+     +---------------------------+           |           +---------+---------+---------+  | ./     |                  |
+     |pc4 | btAddr5 | numFrames=1|-____      |                                            |/"      |                  |
+     +---+-----------------------+     ""--__|                                            |        |                  |
+     |...|                                   |""--___ bt5+---------+                      |        +------------------+
+     +---+                                   |       ""--|funcnamez|                      |
+                                             |           +---------+                      |
+                                             |                                            |
+                                             |                                            |
+                                             |                                            |
+                                             +--------------------------------------------+
+
+http://buttersquid.ink/?spore=bNobwRALmBckEYHsAeYA0YXQKzoJ4wDZ0IkpYAHAYwEYA
+CAH1rggEEATNgJzsYDsBXALYAxTgENBAUwDOAXgBMaMADcYETv0kBfVODLxkSzDjD5oADmKkYYK
+vIZNWHTvb5DREmbIDMS1dHVNHT0bCEQUdGM8GGoABit9Km8HZnYuV1oBEXEpOV90f0DtXUhQ8KM
+YEzNqeQSbKgAWFKcuLAcsj1zZaj81DWKQ2DDDSMro6GoGutgAOjnegP7g0qHy0ewAdnGiSGtYAD
+N+XkpeTx6CvqCS-WGIjEqt0xiTEn1D49OpAC8FouWbtb3TbjOLTMDvE6eO6FJbXMojIEER7VeK7
+N5HSFSWK-WGDAx3TAbZExVGvGwQz6SRQXRZXPG3CrQBo7MxTNE2SgIXjSCC0SgACzEnAAVJlPNJ
+gABdBb7MQAG2kAxWYDlAEteJIjD1oN42UhFNgWdqAJx4A3UajoSRiGCoyRwW3oOWGaC1FUIMyku
+UwcBy-QAHX4sWD5xV-liWn+NjVGq1MF1kQNWCNMUtpnNaetjrA9uzzswbudnuI3ugvoDQZDSjl4
+cjcNgMc1kW1CYwSZTE28ZpiOyz0DtDv7TpdhY92YgpfLNkDwdioZrtrr9MBmCR2zBFM81JUlyV+
+kbcZ1evbeG1yINjz7A7zLq77uLkEnKors-ntajsE4kkoUHWxtNTzYOgADuMQAfyJLoPslA2MKSj
+7PsN6YAAtDsRYwMhbITj6z42DynDqgA5rQ5AIAg3pOv41BLsqDLrHEqJmABZKwPykhys6-r+rEg
+hiOqXGxHMMz+rwgrSPyqoEA0AkyvKiofvijJYHeZgvHsYDMKG-iygqe7wgSlQqTAzHqcw27aXJe
+mrAixhGRMWGmRAWCybpCl0UCVQwA5+gzBxbBCOQMzMLQ+yqnKTY7tAOnyfWYBfj+jINJ5EwgV5J
+gQa6qLQTYtDwYhQ7uihjzodAyHMU+fo2HAYiUAA1uoNWSCRZEUWGMQ0fu6oRUgJppvqxmWKY2pV
+BeVo2gVuYFfmMCjg+2FlrhsAzlWlGLgpB7NsZfUGsag24NqFrdhMmbjdeU0jsOc0VS+K1tf2HXR
+l1h7GttA2njEKk7WN2aTai02upd47XdOlZztW76SkAA

@@ -139,7 +139,11 @@ class MyJitListener : public JITEventListener {
         auto dir = std::filesystem::path(fmt::format("/tmp/.lldump/"));
         std::filesystem::create_directories(dir);
         auto id = _uniq.fetch_add(1);
+
+        // old dump file
         auto filename = fmt::format("{}.{}.lldump", getpid(), id);
+        auto file = dir / filename;
+
         // File containing backtrace dumps. Each line is
         // pc,btAddr,numFrames
         //  where btAddr is a pointer to array of addresses
@@ -170,10 +174,11 @@ class MyJitListener : public JITEventListener {
 
          */
         auto btfilename = fmt::format("{}.{}.lldump.bt", getpid(), id);
-        auto elffilename = fmt::format("{}.{}.o", getpid(), id);
-        auto file = dir / filename;
         auto btfile = dir / btfilename;
+
+        auto elffilename = fmt::format("{}.{}.o", getpid(), id);
         auto elffile = dir / elffilename;
+        // dump elf file to disk
         fmt::print("Elf file {}\n", elffile.string());
         writeToOutput(elffile.string(), [&DebugObj](llvm::raw_ostream &x) {
             auto buf = DebugObj.getMemoryBufferRef().getBuffer();
@@ -196,6 +201,7 @@ class MyJitListener : public JITEventListener {
 
 
         auto outf = std::fopen(file.c_str(), "w");
+        auto btoutf = std::fopen(btfile.c_str(), "w");
         // dump the in-memory address of the elf file
         fmt::print(outf, "NEWFILE {} {} {}\n", K, (uint64_t) start, size);
 
@@ -276,6 +282,7 @@ class MyJitListener : public JITEventListener {
                 llvm::StringRef btStr{(const char*)bt.data(), bt.size() * sizeof(uintptr_t) / sizeof(char)};
                 auto btAddr = uniqBTs.save(btStr);
                 auto smolbt = SmolBT{(uintptr_t*)btAddr.data(), numfr};
+                fmt::print(btoutf, "{} {} {}\n", pc, (uintptr_t)smolbt.start, numfr);
                 backtracesSmol.insert({pc, smolbt});
                 backtraces.insert({pc, bt});
             }
@@ -303,6 +310,9 @@ class MyJitListener : public JITEventListener {
         std::fflush(stdout);
         if (fclose(outf)) {
             fmt::print(stderr, "Error in close\n");
+        };
+        if (fclose(btoutf)) {
+            fmt::print(stderr, "Error in closing btfile\n");
         };
         fmt::print("Closed\n");
         std::fflush(stdout);
