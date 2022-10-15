@@ -19,9 +19,9 @@ target_include_directories(profjit PRIVATE ${elfin_INCLUDE_DIRS}/elfin)
 
 add_library(fib OBJECT fib.c)
 target_compile_options(fib PUBLIC -emit-llvm -S)
-target_compile_options(fib PUBLIC -O3)
+target_compile_options(fib PUBLIC -O2)
 target_compile_options(fib PUBLIC -g -fdebug-default-version=4)
-#target_compile_options(fib PUBLIC -fno-omit-frame-pointer)
+target_compile_options(fib PUBLIC -fno-omit-frame-pointer)
 target_compile_definitions(profjit PUBLIC FIB_LL_PATH="$<TARGET_OBJECTS:fib>")
 #
 #

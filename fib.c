@@ -14,12 +14,20 @@ int f0(int n) {
 }
 
 int g3(int n) {
-    return n / 2;
+    int x = 0;
+    for (long i = 0; i < 10000000000L; ++i) {
+        x += f1(f1(n));
+    }
+    return x;
 }
 
 int g2(int n){
     if (n % 2) {
-        return f1(n);
+        int x = 0;
+        for (int i = 0; i < 1000000000; ++i) {
+            x += f1(n);
+        }
+        return x;
     } else {
         return g3(n);
     }
@@ -31,15 +39,22 @@ int g1(int n) {
 }
 
 int g0(int n) {
-    return n %3 ? f0(n) : g1(n+2);
-}
-
-int fib(int n) {
-    return g0(n) + f0(n);
+    int x = 0;
+    for (long i = 0; i < 10000000000L; ++i) {
+        x += n % 4 ? g3(n) : g1(n);
+    }
+    return x;
 }
 
 int fibold(int n) {
-    return fib2(n);
+    return g0(n) + f0(n);
+}
+
+int fib(int n) {
+    // int x = fib2(n);
+
+    int x = 0;
+    return x + g0(n);
     // if (n < 2)
     //     return n;
     // return fib(n-1) + fib(n-2);

@@ -200,10 +200,10 @@ class MyJitListener : public JITEventListener {
         llvm::DenseMap<uintptr_t, SmolBT> backtracesSmol;
 
 
-        auto outf = std::fopen(file.c_str(), "w");
+        // auto outf = std::fopen(file.c_str(), "w");
         auto btoutf = std::fopen(btfile.c_str(), "w");
         // dump the in-memory address of the elf file
-        fmt::print(outf, "NEWFILE {} {} {}\n", K, (uint64_t) start, size);
+        // fmt::print(outf, "NEWFILE {} {} {}\n", K, (uint64_t) start, size);
 
         for (const std::pair<SymbolRef, uint64_t> &P: computeSymbolSizes(DebugObj)) {
             SymbolRef Sym = P.first;
@@ -239,7 +239,7 @@ class MyJitListener : public JITEventListener {
                 if (*SectOrErr != Obj.section_end())
                     SectionIndex = SectOrErr.get()->getIndex();
             fmt::print("sym {} size {} addr {:x} section {}\n", *Name, Size, Address.Address, SectionIndex);
-            fmt::print(outf, "{} {} {}\n", *Name, Size, Address.Address);
+            // fmt::print(outf, "{} {} {}\n", *Name, Size, Address.Address);
             for (auto &cu: mydw.compilation_units()) {
                 // fmt::print("file {}\n", cu.get_line_table().begin()->file->path);
                 // myelf.get_section(SectionIndex)
@@ -261,13 +261,15 @@ class MyJitListener : public JITEventListener {
             }
             Address.SectionIndex = SectionIndex;
 
-            auto spec = DILineInfoSpecifier{DILineInfoSpecifier::FileLineInfoKind::BaseNameOnly,
-                                            DILineInfoSpecifier::FunctionNameKind::ShortName};
+            const auto spec = DILineInfoSpecifier{DILineInfoSpecifier::FileLineInfoKind::BaseNameOnly,
+                                                  DILineInfoSpecifier::FunctionNameKind::ShortName};
             // According to spec debugging info has to come before loading the
             // corresonding code load.
-            DILineInfoTable Lines = Context->getLineInfoForAddressRange(
-                    {*AddrOrErr, SectionIndex}, Size, spec);
-            for (auto &[pc, x]: Lines) {
+            // DILineInfoTable Lines = Context->getLineInfoForAddressRange(
+            //         {*AddrOrErr, SectionIndex}, Size, spec);
+            // FIXME: Instead of doing ++pc, we should be jumping by each instruction offset.
+            //  This probably requires disassembling the code.
+            for (auto pc = Address.Address; pc < Address.Address + Size; ++pc) {
                 // fmt::print("addr {:x} info l={} n={} c={}\n", pc, x.Line, x.FunctionName, x.Column);
                 FrameNamesStack bt;
                 auto inliningInfo = Context->getInliningInfoForAddress({pc, SectionIndex}, spec);
@@ -276,13 +278,13 @@ class MyJitListener : public JITEventListener {
                     auto f = inliningInfo.getFrame(i);
                     auto fnNameAddr = funcNames.save(f.FunctionName);
                     bt.push_back((uintptr_t) fnNameAddr.data());
-                    fmt::print("inline addr {:x} info l={} n={} c={}\n", pc, f.Line, f.FunctionName, f.Column);
+                    // fmt::print("inline addr {:x} info l={} n={} c={}\n", pc, f.Line, f.FunctionName, f.Column);
                 }
                 // cast the frameNames (array of addresses) to a string so that it can be uniquified
-                llvm::StringRef btStr{(const char*)bt.data(), bt.size() * sizeof(uintptr_t) / sizeof(char)};
+                llvm::StringRef btStr{(const char*) bt.data(), bt.size() * sizeof(uintptr_t) / sizeof(char)};
                 auto btAddr = uniqBTs.save(btStr);
-                auto smolbt = SmolBT{(uintptr_t*)btAddr.data(), numfr};
-                fmt::print(btoutf, "{} {} {}\n", pc, (uintptr_t)smolbt.start, numfr);
+                auto smolbt = SmolBT{(uintptr_t*) btAddr.data(), numfr};
+                fmt::print(btoutf, "{} {} {}\n", pc, (uintptr_t) smolbt.start, numfr);
                 backtracesSmol.insert({pc, smolbt});
                 backtraces.insert({pc, bt});
             }
@@ -296,7 +298,8 @@ class MyJitListener : public JITEventListener {
         //     }
         //     fmt::print("\b]\n");
         // }
-        fmt::print("BacktracesSmol ({} entries, using {} bytes):\n", backtracesSmol.size(), backtracesSmol.getMemorySize());
+        fmt::print("BacktracesSmol ({} entries, using {} bytes):\n", backtracesSmol.size(),
+                   backtracesSmol.getMemorySize());
         for (auto &[pc, btAddr]: backtracesSmol) {
             fmt::print("{:x}: [", pc);
             for (int i = 0; i < btAddr.numAddrs; ++i) {
@@ -304,13 +307,15 @@ class MyJitListener : public JITEventListener {
             }
             fmt::print("\b]\n");
         }
-        fmt::print("Strings pool stored {} bytes, total {} bytes\n", stringAlloc.getBytesAllocated(), stringAlloc.getTotalMemory());
-        fmt::print("Frames pool stored {} bytes, total {} bytes\n", btAlloc.getBytesAllocated(), btAlloc.getTotalMemory());
+        fmt::print("Strings pool stored {} bytes, total {} bytes\n", stringAlloc.getBytesAllocated(),
+                   stringAlloc.getTotalMemory());
+        fmt::print("Frames pool stored {} bytes, total {} bytes\n", btAlloc.getBytesAllocated(),
+                   btAlloc.getTotalMemory());
         fmt::print("Dumped to {}\n", file.string());
         std::fflush(stdout);
-        if (fclose(outf)) {
-            fmt::print(stderr, "Error in close\n");
-        };
+        // if (fclose(outf)) {
+        //     fmt::print(stderr, "Error in close\n");
+        // };
         if (fclose(btoutf)) {
             fmt::print(stderr, "Error in closing btfile\n");
         };
