@@ -15,6 +15,7 @@
 #include <llvm/Target/TargetOptions.h>
 #include <llvm/Support/TargetSelect.h>
 #include <llvm/Support/FileSystem.h>
+#include <llvm/Support/StringSaver.h>
 #include <llvm/IR/Verifier.h>
 #include <unistd.h>
 #include <filesystem>
@@ -22,16 +23,16 @@
 #include <elf/elf++.hh>
 #include <dwarf/dwarf++.hh>
 
-class myloader: public elf::loader {
+class myloader : public elf::loader {
     const char* buf_start;
     uint64_t buf_size;
 public:
     myloader(const char* buf_start, uint64_t buf_size) : buf_start{buf_start}, buf_size{buf_size} {}
 
-    const void *load(off_t offset, size_t size) override {
+    const void* load(off_t offset, size_t size) override {
         fmt::print("Loading elf at offset {} size {}\n", offset, size);
         assert(offset + size <= buf_size);
-        return (void*)(buf_start + offset);
+        return (void*) (buf_start + offset);
     }
 };
 
@@ -82,7 +83,18 @@ public:
 
 auto _uniq = std::atomic_int{0};
 
+// TODO:
+//  1. llvm::StringSaver only uses the default BumpPtr with 4KB init.
+//      It is not generic over the bump-ptr implementation.
+//      We don't need so much, need to re-implement StringSaver with smaller sizes.
+//  2. Should figure out when to clear the allocator. On llvm-module unload?
+//      how to know when that happens?
+using StringPoolAlloc = llvm::BumpPtrAllocatorImpl<>;
+
 class MyJitListener : public JITEventListener {
+    static StringPoolAlloc stringAlloc;
+    static StringPoolAlloc btAlloc;
+
     void notifyObjectLoaded(ObjectKey K, const object::ObjectFile &Obj,
                             const RuntimeDyld::LoadedObjectInfo &L) override {
         outs() << "Loaded key " << K << "\n";
@@ -101,9 +113,9 @@ class MyJitListener : public JITEventListener {
         OwningBinary<ObjectFile> DebugObjOwner = L.getObjectForDebug(Obj);
         const ObjectFile &DebugObj = *DebugObjOwner.getBinary();
         auto start = DebugObj.getMemoryBufferRef().getBufferStart();
-        auto size =  DebugObj.getMemoryBufferRef().getBufferSize();
+        auto size = DebugObj.getMemoryBufferRef().getBufferSize();
 
-        ::elf::elf myelf {std::make_shared<myloader>(start, size)};
+        ::elf::elf myelf{std::make_shared<myloader>(start, size)};
         fmt::print("isval {}\n", myelf.valid());
         auto &hdr = myelf.get_hdr();
 
@@ -126,13 +138,66 @@ class MyJitListener : public JITEventListener {
 
         auto dir = std::filesystem::path(fmt::format("/tmp/.lldump/"));
         std::filesystem::create_directories(dir);
-        auto filename = fmt::format("{}.{}.lldump", getpid(), _uniq.fetch_add(1));
+        auto id = _uniq.fetch_add(1);
+        auto filename = fmt::format("{}.{}.lldump", getpid(), id);
+        // File containing backtrace dumps. Each line is
+        // pc,btAddr,numFrames
+        //  where btAddr is a pointer to array of addresses
+        //    this array of addresses is the list of function names corresponding to the pc.
+        /*
+         * Diagram:
+                                             +--------------------------------------------+
+                                             |               backtrace pool               |
+                                             |                                            |
+                                             |                                            |
+      .lldump.bt file                        | const char* names[]                        |-__     +------------------+
+     +---------------------------+           |        bt1+---------+---------+            |   "__  |   string pool    |
+     |pc1 | btAddr1 | numFrames=2|-----------|-----------|funcname1|funcname2|            |      "-|                  |
+     +---------------------------+           |           +---------+---------+            |        |                  |
+     |pc2 | btAddr2 | numFrames=3|--_____    |                                            |       -|                  |
+     +---------------------------+       """-|-_____  bt2+---------+---------+---------+  |     /" | hello\0main\0... |
+     |pc3 | btAddr2 | numFrames=3|-----------|-----------|funcnamex|funcname0|funcname2|  |---//---| hashi64\0        |
+     +---------------------------+           |           +---------+---------+---------+  | ./     |                  |
+     |pc4 | btAddr5 | numFrames=1|-____      |                                            |/"      |                  |
+     +---+-----------------------+     ""--__|                                            |        |                  |
+     |...|                                   |""--___ bt5+---------+                      |        +------------------+
+     +---+                                   |       ""--|funcnamez|                      |
+                                             |           +---------+                      |
+                                             |                                            |
+                                             |                                            |
+                                             |                                            |
+                                             +--------------------------------------------+
+
+         */
+        auto btfilename = fmt::format("{}.{}.lldump.bt", getpid(), id);
+        auto elffilename = fmt::format("{}.{}.o", getpid(), id);
         auto file = dir / filename;
-        auto ec = std::error_code();
+        auto btfile = dir / btfilename;
+        auto elffile = dir / elffilename;
+        fmt::print("Elf file {}\n", elffile.string());
+        writeToOutput(elffile.string(), [&DebugObj](llvm::raw_ostream &x) {
+            auto buf = DebugObj.getMemoryBufferRef().getBuffer();
+            x.write(buf.data(), buf.size());
+            return Error::success();
+        });
+
+        // llvm::StringSet funcNames{};
+        llvm::UniqueStringSaver funcNames{stringAlloc};
+        llvm::UniqueStringSaver uniqBTs{btAlloc};
+        using FrameNamesStack = llvm::SmallVector<uintptr_t, 4>;
+        // TODO: We should add a level of indirection to deduplicate the frames stack.
+        //  Making this a map from pcAddr to frameStackAddr
+        llvm::DenseMap<uintptr_t, FrameNamesStack> backtraces;
+        struct SmolBT {
+            uintptr_t* start;
+            size_t numAddrs;
+        };
+        llvm::DenseMap<uintptr_t, SmolBT> backtracesSmol;
+
 
         auto outf = std::fopen(file.c_str(), "w");
-        // dump{file, ec, sys::fs::OpenFlags::OF_Text};
-        fmt::print(outf, "NEWFILE {} {} {}\n", K, (uint64_t)start, size);
+        // dump the in-memory address of the elf file
+        fmt::print(outf, "NEWFILE {} {} {}\n", K, (uint64_t) start, size);
 
         for (const std::pair<SymbolRef, uint64_t> &P: computeSymbolSizes(DebugObj)) {
             SymbolRef Sym = P.first;
@@ -169,13 +234,13 @@ class MyJitListener : public JITEventListener {
                     SectionIndex = SectOrErr.get()->getIndex();
             fmt::print("sym {} size {} addr {:x} section {}\n", *Name, Size, Address.Address, SectionIndex);
             fmt::print(outf, "{} {} {}\n", *Name, Size, Address.Address);
-            for(auto &cu: mydw.compilation_units()) {
+            for (auto &cu: mydw.compilation_units()) {
                 // fmt::print("file {}\n", cu.get_line_table().begin()->file->path);
                 // myelf.get_section(SectionIndex)
                 auto addr = Address.Address + 2 - textAddr;
                 auto rng = ::dwarf::die_pc_range(cu.root());
-                if(!::dwarf::die_pc_range(cu.root()).contains(addr)) {
-                    for(auto r: rng) {
+                if (!::dwarf::die_pc_range(cu.root()).contains(addr)) {
+                    for (auto r: rng) {
                         fmt::print("not found {} {}\n", r.low, r.high);
 
                     }
@@ -183,7 +248,7 @@ class MyJitListener : public JITEventListener {
                 }
                 auto &lt = cu.get_line_table();
                 auto it = lt.find_address(addr);
-                if(it != lt.end()) {
+                if (it != lt.end()) {
                     fmt::print("[DEBUG] Got LTI {} {:#x}\n", it->get_description(), it->address);
                     fmt::print("line {} \n", it->line);
                 }
@@ -197,26 +262,55 @@ class MyJitListener : public JITEventListener {
             DILineInfoTable Lines = Context->getLineInfoForAddressRange(
                     {*AddrOrErr, SectionIndex}, Size, spec);
             for (auto &[pc, x]: Lines) {
-                fmt::print("addr {:x} info l={} n={} c={}\n", pc, x.Line, x.FunctionName, x.Column);
+                // fmt::print("addr {:x} info l={} n={} c={}\n", pc, x.Line, x.FunctionName, x.Column);
+                FrameNamesStack bt;
                 auto inliningInfo = Context->getInliningInfoForAddress({pc, SectionIndex}, spec);
                 auto numfr = inliningInfo.getNumberOfFrames();
-                if (numfr > 1) {
-                    for (uint32_t i = 0; i < numfr; ++i) {
-                        auto f = inliningInfo.getFrame(i);
-                        fmt::print("inline addr {:x} info l={} n={} c={}\n", pc, f.Line, f.FunctionName, f.Column);
-                    }
+                for (uint32_t i = 0; i < numfr; ++i) {
+                    auto f = inliningInfo.getFrame(i);
+                    auto fnNameAddr = funcNames.save(f.FunctionName);
+                    bt.push_back((uintptr_t) fnNameAddr.data());
+                    fmt::print("inline addr {:x} info l={} n={} c={}\n", pc, f.Line, f.FunctionName, f.Column);
                 }
+                // cast the frameNames (array of addresses) to a string so that it can be uniquified
+                llvm::StringRef btStr{(const char*)bt.data(), bt.size() * sizeof(uintptr_t) / sizeof(char)};
+                auto btAddr = uniqBTs.save(btStr);
+                auto smolbt = SmolBT{(uintptr_t*)btAddr.data(), numfr};
+                backtracesSmol.insert({pc, smolbt});
+                backtraces.insert({pc, bt});
             }
         }
+
+        fmt::print("Backtraces ({} entries, using {} bytes):\n", backtraces.size(), backtraces.getMemorySize());
+        // for (auto &[pc, bt]: backtraces) {
+        //     fmt::print("{:x}: [", pc);
+        //     for (auto fnNameAddr: bt) {
+        //         fmt::print("{},", (const char*) fnNameAddr);
+        //     }
+        //     fmt::print("\b]\n");
+        // }
+        fmt::print("BacktracesSmol ({} entries, using {} bytes):\n", backtracesSmol.size(), backtracesSmol.getMemorySize());
+        for (auto &[pc, btAddr]: backtracesSmol) {
+            fmt::print("{:x}: [", pc);
+            for (int i = 0; i < btAddr.numAddrs; ++i) {
+                fmt::print("{},", (const char*) btAddr.start[i]);
+            }
+            fmt::print("\b]\n");
+        }
+        fmt::print("Strings pool stored {} bytes, total {} bytes\n", stringAlloc.getBytesAllocated(), stringAlloc.getTotalMemory());
+        fmt::print("Frames pool stored {} bytes, total {} bytes\n", btAlloc.getBytesAllocated(), btAlloc.getTotalMemory());
         fmt::print("Dumped to {}\n", file.string());
         std::fflush(stdout);
-        if(fclose(outf)) {
+        if (fclose(outf)) {
             fmt::print(stderr, "Error in close\n");
         };
         fmt::print("Closed\n");
         std::fflush(stdout);
     }
 };
+
+StringPoolAlloc MyJitListener::stringAlloc;
+StringPoolAlloc MyJitListener::btAlloc;
 
 [[maybe_unused]] jlong Java_com_craftinginterpreters_lox_Lox_compileJit(JNIEnv*, jclass) {
     fmt::print("Compiling jit!\n");
