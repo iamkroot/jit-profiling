@@ -19,6 +19,21 @@
 #include <unistd.h>
 #include <filesystem>
 #include <atomic>
+#include <elf/elf++.hh>
+#include <dwarf/dwarf++.hh>
+
+class myloader: public elf::loader {
+    const char* buf_start;
+    uint64_t buf_size;
+public:
+    myloader(const char* buf_start, uint64_t buf_size) : buf_start{buf_start}, buf_size{buf_size} {}
+
+    const void *load(off_t offset, size_t size) override {
+        fmt::print("Loading elf at offset {} size {}\n", offset, size);
+        assert(offset + size <= buf_size);
+        return (void*)(buf_start + offset);
+    }
+};
 
 extern "C" int fib(int n) {
     if (n < 2) return n;
@@ -71,15 +86,34 @@ class MyJitListener : public JITEventListener {
     void notifyObjectLoaded(ObjectKey K, const object::ObjectFile &Obj,
                             const RuntimeDyld::LoadedObjectInfo &L) override {
         outs() << "Loaded key " << K << "\n";
+        uintptr_t textAddr = 0;
         for (auto section: Obj.sections()) {
             auto addr = L.getSectionLoadAddress(section);
-            outs() << "Loaded " << cantFail(section.getName()) << " at " << to_hexString(addr) << "\n";
+            auto name = cantFail(section.getName());
+            if (name == ".text") {
+                textAddr = addr;
+            }
+            outs() << "Loaded " << name << " at " << to_hexString(addr) << " with " << section.getSize() << "bytes\n";
         }
         llvm::outs().flush();
         using namespace llvm::object;
 
         OwningBinary<ObjectFile> DebugObjOwner = L.getObjectForDebug(Obj);
         const ObjectFile &DebugObj = *DebugObjOwner.getBinary();
+        auto start = DebugObj.getMemoryBufferRef().getBufferStart();
+        auto size =  DebugObj.getMemoryBufferRef().getBufferSize();
+
+        ::elf::elf myelf {std::make_shared<myloader>(start, size)};
+        fmt::print("isval {}\n", myelf.valid());
+        auto &hdr = myelf.get_hdr();
+
+        fmt::print("{} {} {}\n", hdr.phnum, hdr.phentsize, hdr.phoff);
+        ::dwarf::dwarf mydw{::dwarf::elf::create_loader(myelf)};
+
+        //
+        // for(auto& seg:myelf.segments()) {
+        //     fmt::print("seg paddr{:x} vaddr{:x}\n", seg.get_hdr().paddr, seg.get_hdr().vaddr);
+        // }
 
         // auto dctx = DWARFContext::create(DebugObj);
         // dctx->getLineTableForUnit(dctx->getUnitAtIndex(0));
@@ -98,6 +132,7 @@ class MyJitListener : public JITEventListener {
 
         auto outf = std::fopen(file.c_str(), "w");
         // dump{file, ec, sys::fs::OpenFlags::OF_Text};
+        fmt::print(outf, "NEWFILE {} {} {}\n", K, (uint64_t)start, size);
 
         for (const std::pair<SymbolRef, uint64_t> &P: computeSymbolSizes(DebugObj)) {
             SymbolRef Sym = P.first;
@@ -134,6 +169,25 @@ class MyJitListener : public JITEventListener {
                     SectionIndex = SectOrErr.get()->getIndex();
             fmt::print("sym {} size {} addr {:x} section {}\n", *Name, Size, Address.Address, SectionIndex);
             fmt::print(outf, "{} {} {}\n", *Name, Size, Address.Address);
+            for(auto &cu: mydw.compilation_units()) {
+                // fmt::print("file {}\n", cu.get_line_table().begin()->file->path);
+                // myelf.get_section(SectionIndex)
+                auto addr = Address.Address + 2 - textAddr;
+                auto rng = ::dwarf::die_pc_range(cu.root());
+                if(!::dwarf::die_pc_range(cu.root()).contains(addr)) {
+                    for(auto r: rng) {
+                        fmt::print("not found {} {}\n", r.low, r.high);
+
+                    }
+                    continue;
+                }
+                auto &lt = cu.get_line_table();
+                auto it = lt.find_address(addr);
+                if(it != lt.end()) {
+                    fmt::print("[DEBUG] Got LTI {} {:#x}\n", it->get_description(), it->address);
+                    fmt::print("line {} \n", it->line);
+                }
+            }
             Address.SectionIndex = SectionIndex;
 
             auto spec = DILineInfoSpecifier{DILineInfoSpecifier::FileLineInfoKind::BaseNameOnly,
